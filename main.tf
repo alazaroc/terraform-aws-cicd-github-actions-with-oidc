@@ -1,30 +1,36 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
+
   backend "s3" {
-    bucket         = "terraform-tfstate-playingaws-poc"     # Update it
-    key            = "poc/terraform-github-actions.tfstate" # Update it
-    region         = "eu-west-1"                            # Update it
-    dynamodb_table = "terraform-lock"                       # Update it
-    encrypt        = true
+    bucket       = "terraform-tfstate-playingaws-poc"     # Update it
+    key          = "poc/terraform-github-actions.tfstate" # Update it
+    region       = "eu-west-1"                            # Update it
+    encrypt      = true
+    use_lockfile = true # S3 native block
   }
 }
 
 provider "aws" {
   region = var.aws_region
-  default_tags {
-    tags = {
-      project     = "playingaws-terraform-github-actions"
-      environment = var.environment
-      managed-by  = "terraform"
-    }
-  }
+}
+
+# Suffix to avoid duplicated names
+resource "random_id" "budget_suffix" {
+  byte_length = 2 # 4 characters hex (e.g. 'a1b2')
 }
 
 resource "aws_budgets_budget" "zero_spend_budget" {
-  name         = "ZeroSpendBudget"
+  name         = "ZeroSpendBudget-${random_id.budget_suffix.hex}"
   budget_type  = "COST"
   limit_amount = var.budget_amount
   limit_unit   = "USD"

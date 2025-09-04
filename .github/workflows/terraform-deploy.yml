@@ -2,18 +2,29 @@ name: Terraform Deploy (OIDC)
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
     paths:
-      - 'main.tf'
+      - '**.tf'
       - '.github/workflows/terraform-deploy.yml'
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
     paths:
-      - 'main.tf'
+      - '**.tf'
       - '.github/workflows/terraform-deploy.yml'
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Select action to run"
+        type: choice
+        required: true
+        options:
+          - plan-apply
+          - destroy
+        default: plan-apply
+      var_file:
+        description: "Optional .tfvars file (e.g., dev.tfvars)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write   # required for OIDC
@@ -22,6 +33,7 @@ permissions:
 env:
   AWS_REGION: eu-west-1
   TF_IN_AUTOMATION: true
+  STATE_BUCKET: terraform-tfstate-playingaws-poc  # <- keep in sync with backend bucket
 
 concurrency:
   group: terraform-${{ github.ref }}
@@ -31,7 +43,8 @@ jobs:
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
-
+    # run on push/PR, or when manually triggered with action=plan-apply
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'plan-apply'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,8 +55,19 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::<YOUR_ACCOUNT_ID>:role/<ROLE_FOR_GITHUB>
+          role-to-assume: ${{ vars.AWS_ROLE_FOR_GITHUB_DEPLOYMENTS }} # or hardcode the updated value "arn:aws:iam::<YOUR_ACCOUNT_ID>:role/<ROLE_FOR_GITHUB>"
           aws-region: ${{ env.AWS_REGION }}
+
+      # Optional safety net to avoid init failures if the state bucket was deleted
+      - name: Ensure backend bucket exists (optional)
+        run: |
+          if ! aws s3api head-bucket --bucket "$STATE_BUCKET" 2>/dev/null; then
+            aws s3api create-bucket --bucket "$STATE_BUCKET" \
+              --region "$AWS_REGION" \
+              --create-bucket-configuration LocationConstraint="$AWS_REGION"
+            aws s3api put-bucket-versioning --bucket "$STATE_BUCKET" \
+              --versioning-configuration Status=Enabled
+          fi
 
       - name: Terraform Init
         run: terraform init -input=false
@@ -55,7 +79,12 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -input=false -out=tfplan
+        run: |
+          if [ -n "${{ github.event.inputs.var_file }}" ]; then
+            terraform plan -input=false -out=tfplan -var-file="${{ github.event.inputs.var_file }}"
+          else
+            terraform plan -input=false -out=tfplan
+          fi
 
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
@@ -67,10 +96,10 @@ jobs:
     name: Terraform Apply (requires approval)
     needs: plan
     runs-on: ubuntu-latest
+    # do not apply on PRs; allow on push or manual action=plan-apply
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'plan-apply')
     environment:
-      name: production   # configure Environment protections (required reviewers) in GitHub -> Settings -> Environments
-    if: github.event_name != 'pull_request'  # don't apply on PRs
-
+      name: production   # configure required reviewers in Settings → Environments → production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -81,7 +110,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::<YOUR_ACCOUNT_ID>:role/<ROLE_FOR_GITHUB>
+          role-to-assume: ${{ vars.AWS_ROLE_FOR_GITHUB_DEPLOYMENTS }} # or hardcode the updated value "arn:aws:iam::<YOUR_ACCOUNT_ID>:role/<ROLE_FOR_GITHUB>"
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Terraform Init
@@ -95,3 +124,45 @@ jobs:
 
       - name: Terraform Apply
         run: terraform apply -input=false tfplan
+
+  destroy:
+    name: Terraform Destroy (manual)
+    runs-on: ubuntu-latest
+    # only when manually triggered with action=destroy
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    environment:
+      name: production   # optional: require approval for destroys as well
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_FOR_GITHUB_DEPLOYMENTS }} # or hardcode the updated value "arn:aws:iam::<YOUR_ACCOUNT_ID>:role/<ROLE_FOR_GITHUB>"
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Optional safety net (same as in plan)
+      - name: Ensure backend bucket exists (optional)
+        run: |
+          if ! aws s3api head-bucket --bucket "$STATE_BUCKET" 2>/dev/null; then
+            aws s3api create-bucket --bucket "$STATE_BUCKET" \
+              --region "$AWS_REGION" \
+              --create-bucket-configuration LocationConstraint="$AWS_REGION"
+            aws s3api put-bucket-versioning --bucket "$STATE_BUCKET" \
+              --versioning-configuration Status=Enabled
+          fi
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Destroy
+        run: |
+          if [ -n "${{ github.event.inputs.var_file }}" ]; then
+            terraform destroy -input=false -auto-approve -var-file="${{ github.event.inputs.var_file }}"
+          else
+            terraform destroy -input=false -auto-approve
+          fi

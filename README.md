@@ -4,18 +4,20 @@
 
 This repository demonstrates deploying **Terraform** to **AWS** via **GitHub Actions** using **OIDC** (no long‑lived secrets). It provisions a tiny **AWS Budget** (USD 0.1/mo) as a canary to validate the CI/CD flow.
 
-## What’s inside
+## Whats inside
 
-- `main.tf`: AWS provider, optional S3/DynamoDB **remote backend**, and an `aws_budgets_budget` resource.
+- `main.tf`: AWS provider, optional S3 **remote backend**, and an `aws_budgets_budget` resource.
 - `.github/workflows/terraform-deploy.yml`: split **plan/apply**, supports **Environment approvals**, and authenticates with **OIDC**.
 
-> ⚠️ Using a remote backend (S3 + DynamoDB) may incur small charges. See **Costs** and **Cleanup**.
+> ⚠️ Using a remote backend (S3) may incur small charges. See **Costs** and **Cleanup**.
+
+If you want to check `how to deploy AWS resources with Terraform and Secrets`, check this other repository: https://github.com/alazaroc/terraform-aws-cicd-github-actions-with-secrets
 
 ---
 
 ## Requirements
 
-- **AWS account** with permissions for S3 (state), DynamoDB (lock), and **AWS Budgets**.
+- **AWS account** with permissions for S3 (state and lock), and **AWS Budgets**.
 - **GitHub repository** with Actions enabled.
 - **Terraform** (≥ 1.5 recommended) if you want to test locally.
 
@@ -69,7 +71,7 @@ permissions:
 ## Using variables (`.tfvars`)
 
 Your `variables.tf` includes safe defaults (e.g., `notification_email = "your_email@domain.com"`), so Terraform works **without** a `.tfvars` file.  
-However, it’s **best practice** to keep real values in a `.tfvars`.
+However, its **best practice** to keep real values in a `.tfvars`.
 
 **Recommended (auto‑loaded):**
 
@@ -122,7 +124,7 @@ terraform apply -auto-approve
 
 ## Troubleshooting
 
-- **Denied on S3/DynamoDB** → check least‑privilege policy and resource ARNs.  
+- **Denied on S3** → check least‑privilege policy and resource ARNs.  
 - **`AssumeRoleWithWebIdentity` fails** → verify trust policy (`aud` and `sub` values).  
 - **Want manual approvals** → keep `environment: production` and configure **Environment protection rules**.  
 - **Verify identity** → add a step `aws sts get-caller-identity` in the job.
@@ -132,14 +134,14 @@ terraform apply -auto-approve
 ## Costs
 
 - **Budgets**: free.  
-- **S3** (state) and **DynamoDB** (lock): minimal usage‑based cost.
+- **S3** (state and lock): minimal usage‑based cost.
 
 ---
 
 ## Cleanup
 
 1) `terraform destroy -auto-approve`  
-2) Delete S3 bucket (including versions) and DynamoDB table if you don’t need them.
+2) Delete S3 bucket (including versions) if you dont need it anymore.
 
 ---
 
